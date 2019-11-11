@@ -1,0 +1,697 @@
+
+#include <iostream>
+
+#include<opencv\cv.h>
+#include<opencv\highgui.h>
+#include<opencv\cxcore.h>
+
+#include<stdio.h>
+#include<Windows.h>
+#include<stdlib.h>
+#include<time.h>
+
+#define unsigned char uchar
+
+int histogram[256], cdfOfHisto[256], histogramEqual[256];
+
+
+uchar** uc_alloc(int size_x, int size_y)
+{
+
+	uchar** m;
+	int i;
+
+	if ((m = (uchar**)calloc(size_y, sizeof(uchar*))) == NULL)
+	{
+		printf("uc_alloc error 1\7\n");
+		exit(0);
+	}
+
+	for (i = 0; i < size_y; i++)
+		if ((m[i] = (uchar*)calloc(size_x, sizeof(uchar))) == NULL) {
+			printf("uc_alloc error 2\7\n");
+			exit(0);
+
+		}
+	return m;
+}
+
+int** i_alloc(int size_x, int size_y)
+{
+
+	int** m;
+	int i;
+
+	if ((m = (int**)calloc(size_y, sizeof(int*))) == NULL)
+	{
+		printf("uc_alloc error 1\7\n");
+		exit(0);
+	}
+
+	for (i = 0; i < size_y; i++)
+		if ((m[i] = (int*)calloc(size_x, sizeof(int))) == NULL) {
+			printf("uc_alloc error 2\7\n");
+			exit(0);
+
+		}
+	return m;
+}
+void read_ucmatrix(int size_x, int size_y, uchar** ucmatrix, char* filename)
+{
+	int i;
+	FILE* f;
+	if ((fopen_s(&f, filename, "rb")) != NULL)
+	{
+		printf("%s File open Error! \n", filename);
+		exit(0);
+
+	}
+	for (i = 0; i < size_y; i++)
+		if (fread(ucmatrix[i], sizeof(uchar), size_x, f) != size_x)
+		{
+			printf("Data Read Error! \n");
+			exit(0);
+
+		}
+	fclose(f);
+}
+void write_ucmatrix(int size_x, int size_y, uchar** ucmatrix, char* filename)
+{
+	int i;
+	FILE* f;
+
+	if ((fopen_s(&f, filename, "wb")) != NULL)
+	{
+		printf("%s File open Error! \n", filename);
+		exit(0);
+	}
+
+	for (i = 0; i < size_y; i++)
+		if (fwrite(ucmatrix[i], sizeof(uchar), size_x, f) != size_x)
+		{
+			printf("Data Write Error! \n");
+			exit(0);
+		}
+	fclose(f);
+}
+double myaver(uchar** img, int Row, int Col) {
+	int i, j, k;
+	double pp[256] = { 0 };
+	double ssum = 0;
+
+	for (k = 0; k < 256; k++) {
+		for (i = 0; i < Row; i++) {
+			for (j = 0; j < Col; j++) {
+				if (img[i][j] == k) {
+					pp[k] += 1;
+				}
+			}
+		}
+		ssum += ((pp[k] * k) / (Row * Col));
+
+	}
+	return ssum;
+
+}
+
+void PowImg(uchar** img, uchar** Result, int Row, int Col, double gamma) {
+	int i, j;
+	double tmp;
+
+
+
+	for (i = 0; i < Row; i++) {
+		for (j = 0; j < Col; j++) {
+
+			tmp = pow(img[i][j] / 255., 1 / gamma);
+
+			if (tmp * 255 > 255)tmp = 1;
+			else if (tmp * 255 < 0) tmp = 0;
+
+			Result[i][j] = tmp * 255;
+
+		}
+	}
+
+}
+void darkandwhite(uchar** img, uchar** outimg, int Row, int Col, int inputaver) {
+
+	double imgaver = 0;
+	double ssum;
+	double gamma;
+	//inputaver==원하는 밝기값설정
+	imgaver = myaver(img, Row, Col);
+	printf("\n★★★★★★★★★★★★★★★★★★★★★★★★★★\n");
+	printf("원래 이미지의 평균값(확률 밀도)은  %f 입니다.\n", imgaver);
+	printf("★★★★★★★★★★★★★★★★★★★★★★★★★★\n\n");
+	if (imgaver > inputaver) {      //이미지의 평균이 128보다 크면
+		for (gamma = 1; gamma > 0.01; gamma -= 0.01) {  //감마 1일때 이미지의 평균값임으로
+								 //감마값을 낮춰 이미지평균값을 낮춰 어둡게한다.
+			PowImg(img, outimg, Row, Col, gamma);
+			ssum = myaver(outimg, Row, Col);   //감마값을 낮춤에 따라 달라지는 이미지의 평균값
+			printf("%f     %f\n", ssum, gamma);
+			if (ssum < inputaver) {               //평균값이 128보다 크다가 점점줄어들어 128보다
+								 //작아지면 설정한 값인 128근처에 왔음을 알고 나간다.
+				break;
+			}
+
+		}
+
+	}
+	else if (imgaver < inputaver) {   //이미지 평균이 128보다 작으면(128보다 어두우면)
+		for (gamma = 1; gamma < 4; gamma += 0.01) {      //감마가 1일때가 이미지의 평균 값임으로
+								 //감마값을 높여 이미지평균값을 높여 밝게한다.
+			PowImg(img, outimg, Row, Col, gamma);
+			ssum = myaver(outimg, Row, Col);
+			printf("%f            %f\n", ssum, gamma);      //감마값을 높인에따라 달라지는 이미지의 평균값
+			if (ssum > inputaver) {      //평균값이 128보다 작다가 점점 커져 128보다 커지면
+						  //설정한 값인 128 근처에 왔음을 알고 나간다.
+				break;
+			}
+
+		}
+
+	}
+}
+
+
+void get_hist(uchar** img, uchar** outimg, int X_Size, int Y_Size) {
+	int i, j, tmp;
+	double tmp1;
+	int t, tp, range, hrange;
+	CvSize histoSize, cdfSize;
+	IplImage* imgHisto;
+	IplImage* cdfImgHisto;
+
+	histoSize.width = 256;
+	histoSize.height = 256;
+
+	cdfSize.width = 256;
+	cdfSize.height = 256;
+
+	imgHisto = cvCreateImage(histoSize, 8, 1);
+	cdfImgHisto = cvCreateImage(cdfSize, 8, 1);
+
+	for (i = 0; i < histoSize.height; i++) {
+		for (j = 0; j < histoSize.width; j++) {
+			((uchar*)(imgHisto->imageData + imgHisto->widthStep * i))[j] = 0;
+		}
+	}
+	for (i = 0; i < cdfSize.height; i++) {
+		for (j = 0; j < cdfSize.width; j++) {
+			((uchar*)(cdfImgHisto->imageData + cdfImgHisto->widthStep * i))[j] = 0;
+		}
+	}
+
+	tp = X_Size * Y_Size;
+
+	for (i = 0; i < 256; i++)
+		histogram[i] = 0;
+
+	for (i = 0; i < Y_Size; i++) {
+		for (j = 0; j < X_Size; j++) {
+			histogram[img[i][j]]++;
+		}
+	}
+
+	tmp1 = 0;
+	for (i = 0; i < 256; ++i) {
+		tmp1 = tmp1 > histogram[i] ? tmp1 : histogram[i];
+	}
+
+	for (i = 0; i < 256; ++i) {
+		tmp = (int)255 * (histogram[i] / tmp1);
+		cvLine(imgHisto, cvPoint(i, 255), cvPoint(i, 255 - tmp), CV_RGB(255, 255, 255), 1, 8, 0);
+
+	}
+	cvShowImage("histo Original img", imgHisto);
+
+	cdfOfHisto[0] = histogram[0];
+
+	for (i = 0; i < 256; i++) {
+		cdfOfHisto[i] = cdfOfHisto[i - 1] + histogram[i];
+	}
+
+	tmp1 = (double)cdfOfHisto[255];
+	for (i = 0; i < 256; i++) {
+		tmp = (int)255 * (cdfOfHisto[i] / tmp1);
+		cvLine(cdfImgHisto, cvPoint(i, 255), cvPoint(i, 255 - tmp), CV_RGB(255, 255, 255), 1, 8, 0);
+	}
+
+	cvShowImage("cdf Original img", cdfImgHisto);
+
+	range = cdfOfHisto[255] - cdfOfHisto[0];
+	//printf("%d  %d\n", tp, range);
+	histogramEqual[0] = 0;
+
+	for (i = 1; i < 256; ++i) {
+		t = (int)ceil(((cdfOfHisto[i] - cdfOfHisto[0]) * 255.0) / range);
+		histogramEqual[i] = (t < 0) ? 0 : (t > 255) ? 255 : t;
+	}
+	//cvReleaseImage(&imgHisto);
+	for (i = 0; i < Y_Size; ++i) {
+		for (j = 0; j < X_Size; ++j) {
+			outimg[i][j] = histogramEqual[img[i][j]];
+		}
+
+	}
+}
+void get_hist1(uchar **img,uchar **outimg,int X_Size,int Y_Size) {
+	int i, j, tmp;
+	double tmp1;
+	int t, tp, range, hrange;
+	CvSize histoSize, cdfSize;
+	IplImage* imgHisto;
+	IplImage *cdfImgHisto;
+
+	histoSize.width = 256;
+	histoSize.height = 256;
+
+	cdfSize.width = 256;
+	cdfSize.height = 256;
+
+	imgHisto = cvCreateImage(histoSize, 8, 1);
+	cdfImgHisto = cvCreateImage(cdfSize, 8, 1);
+
+	for (i = 0; i < histoSize.height; i++) {
+		for (j = 0; j < histoSize.width; j++) {
+			((uchar*)(imgHisto->imageData + imgHisto->widthStep * i))[j] = 0;
+		}
+	}
+	for (i = 0; i < cdfSize.height; i++) {
+		for (j = 0; j < cdfSize.width; j++) {
+			((uchar*)(cdfImgHisto->imageData + cdfImgHisto->widthStep * i))[j] = 0;
+		}
+	}
+
+	tp = X_Size * Y_Size;
+
+	for (i = 0; i < 256; i++)
+		histogram[i] = 0;
+
+	for (i = 0; i < Y_Size; i++) {
+		for (j = 0; j < X_Size; j++) {
+			histogram[img[i][j]]++;
+		}
+	}
+
+	tmp1 = 0;
+	for (i = 0; i < 256; ++i) {
+		tmp1 = tmp1 > histogram[i] ? tmp1 : histogram[i];
+	}
+
+	for (i = 0; i < 256; ++i) {
+		tmp = (int)255 * (histogram[i] / tmp1);
+		cvLine(imgHisto, cvPoint(i, 255), cvPoint(i, 255 - tmp), CV_RGB(255, 255, 255), 1, 8, 0);
+
+	}
+	cvShowImage("histo Expected img", imgHisto);
+
+	cdfOfHisto[0] = histogram[0];
+
+	for (i = 0; i < 256; i++) {
+		cdfOfHisto[i] = cdfOfHisto[i - 1] + histogram[i];
+	}
+
+	tmp1 = (double)cdfOfHisto[255];
+	for (i = 0; i < 256; i++) {
+		tmp = (int)255 * (cdfOfHisto[i] / tmp1);			//초기화 과정
+		cvLine(cdfImgHisto, cvPoint(i, 255), cvPoint(i, 255 - tmp), CV_RGB(255, 255, 255), 1, 8, 0);
+	}
+
+	cvShowImage("cdf Expected img", cdfImgHisto);
+
+	range = cdfOfHisto[255] - cdfOfHisto[0];
+	printf("%d  %d\n", tp, range);
+	histogramEqual[0] = 0;
+
+	for (i = 1; i < 256; ++i) {
+		t = (int)ceil(((cdfOfHisto[i] - cdfOfHisto[0]) * 255.0) / range);	///소수점 잘라내기
+		histogramEqual[i] = (t < 0) ? 0 : (t> 255) ? 255 : t;
+	}
+	//cvReleaseImage(&imgHisto);
+	//cvReleaseImage(&cdfImgHisto);
+	for (i = 0; i < Y_Size; ++i) {
+		for (j = 0; j < X_Size; ++j) {
+			outimg[i][j] = histogramEqual[img[i][j]];
+		}
+
+	}
+}
+void get_hist2(uchar** img, uchar** outimg, int X_Size, int Y_Size) {
+	int i, j, tmp;
+	double tmp1;
+	int t, tp, range, hrange;
+	CvSize histoSize, cdfSize;
+	IplImage* imgHisto;
+	IplImage* cdfImgHisto;
+
+	histoSize.width = 256;
+	histoSize.height = 256;
+
+	cdfSize.width = 256;
+	cdfSize.height = 256;
+
+	imgHisto = cvCreateImage(histoSize, 8, 1);
+	cdfImgHisto = cvCreateImage(cdfSize, 8, 1);
+
+	for (i = 0; i < histoSize.height; i++) {
+		for (j = 0; j < histoSize.width; j++) {
+			((uchar*)(imgHisto->imageData + imgHisto->widthStep * i))[j] = 0;
+		}
+	}
+	for (i = 0; i < cdfSize.height; i++) {
+		for (j = 0; j < cdfSize.width; j++) {
+			((uchar*)(cdfImgHisto->imageData + cdfImgHisto->widthStep * i))[j] = 0;
+		}
+	}
+
+	tp = X_Size * Y_Size;
+
+	for (i = 0; i < 256; i++)
+		histogram[i] = 0;
+
+	for (i = 0; i < Y_Size; i++) {
+		for (j = 0; j < X_Size; j++) {
+			histogram[img[i][j]]++;
+		}
+	}
+
+	tmp1 = 0;
+	for (i = 0; i < 256; ++i) {
+		tmp1 = tmp1 > histogram[i] ? tmp1 : histogram[i];
+	}
+
+	for (i = 0; i < 256; ++i) {
+		tmp = (int)255 * (histogram[i] / tmp1);
+		cvLine(imgHisto, cvPoint(i, 255), cvPoint(i, 255 - tmp), CV_RGB(255, 255, 255), 1, 8, 0);
+
+	}
+	cvShowImage("histo Matched img", imgHisto);
+
+	cdfOfHisto[0] = histogram[0];
+
+	for (i = 0; i < 256; i++) {
+		cdfOfHisto[i] = cdfOfHisto[i - 1] + histogram[i];
+	}
+
+	tmp1 = (double)cdfOfHisto[255];
+	for (i = 0; i < 256; i++) {
+		tmp = (int)255 * (cdfOfHisto[i] / tmp1);
+		cvLine(cdfImgHisto, cvPoint(i, 255), cvPoint(i, 255 - tmp), CV_RGB(255, 255, 255), 1, 8, 0);
+	}
+
+	cvShowImage("cdf Matched img", cdfImgHisto);
+
+	range = cdfOfHisto[255] - cdfOfHisto[0];
+	//printf("%d  %d\n", tp, range);
+	histogramEqual[0] = 0;
+
+	for (i = 1; i < 256; ++i) {
+		t = (int)ceil(((cdfOfHisto[i] - cdfOfHisto[0]) * 255.0) / range);
+		histogramEqual[i] = (t < 0) ? 0 : (t > 255) ? 255 : t;
+	}
+	//cvReleaseImage(&imgHisto);
+	for (i = 0; i < Y_Size; ++i) {
+		for (j = 0; j < X_Size; ++j) {
+			outimg[i][j] = histogramEqual[img[i][j]];
+		}
+
+	}
+}
+
+void get_Match(uchar** img,uchar** outimg, int X_Size, int Y_Size, int histogram[256], int histogramSpec[256], int histogramMatch[256]) {
+	int i, j, tmp, matchz = 0;
+	float diff;
+	printf("Start HistoGram Specification \n");
+	for (i = 0; i < 256; i++) {
+		histogramMatch[i] = 0;
+		for (j = 0; j < 256; j++) {
+			if (i - histogramSpec[j] > 0) {
+				histogramMatch[i] = j;
+			}
+		}
+	}
+	/*for (i = 0; i < 256; ++i) {
+		diff = abs(i - histogramSpec[0]);
+		matchz = 0;
+		for (j = 0; j < 256; ++j) {
+			if (abs(i - histogramSpec[j]) < diff) {
+				diff = abs(i - histogramSpec[j]);
+				matchz = j;
+
+			}
+		}
+		histogramMatch[i] = (uchar)matchz;
+	}*/
+	for (i = 0; i < Y_Size; ++i) {
+		for (j = 0; j < X_Size; ++j) {
+			outimg[i][j] = histogramMatch[img[i][j]];
+		}
+	}
+
+}
+void getget_Match(uchar** img, uchar** img2,uchar** outimg3, int X_Size, int Y_Size, int histogram[256], int histogramSpec[256], int histogramMatch[256]) {
+	int i, j, tmp, matchz = 0;
+	float diff;
+	uchar** outimg;
+
+	int hist1[256], histSpec[256], histMatch[256];
+
+
+	//get_hist(img, outimg, X_Size, Y_Size);
+
+	printf("Start HistoGram Specification \n");
+	for (i = 0; i < 256; i++) {
+		histogramMatch[i] = 0;
+		for (j = 0; j < 256; j++) {
+			if (i - histogramSpec[j] > 0) {
+				histogramMatch[i] = j;
+			}
+		}
+	}
+	/*for (i = 0; i < 256; ++i) {
+		diff = abs(i - histogramSpec[0]);
+		matchz = 0;
+		for (j = 0; j < 256; ++j) {
+			if (abs(i - histogramSpec[j]) < diff) {
+				diff = abs(i - histogramSpec[j]);
+				matchz = j;
+
+			}
+		}
+		histogramMatch[i] = (uchar)matchz;
+	}*/
+	for (i = 0; i < Y_Size; ++i) {
+		for (j = 0; j < X_Size; ++j) {
+//			outimg[i][j] = histogramMatch[img[i][j]];
+		}
+	}
+
+}
+
+
+
+
+int main(int argc, char* argv[])
+{
+
+	int i, j;
+	IplImage* cvImg;
+	IplImage* cvImg2;
+	CvSize imgSize;
+	CvSize imgSize2;
+	uchar** img;
+	uchar** img2;
+	uchar** outimg;
+	int Block;
+
+	double ssum = 0;
+	int k;
+
+
+	int position;
+
+	uchar** bitimg[8];
+
+	uchar** outimg2;
+	uchar mask = 0x01;
+	
+
+
+	uchar** outimg3;
+
+	int kk, kkk;
+
+	int cc1, cc2;
+
+	int histogram2[256],histogramSpec[256], histogramMatch[256];
+
+	int tmp;
+	double tmp1;
+
+	uchar** outimg4;
+
+	srand(time(NULL));
+
+	if (argc != 7)
+	{
+		printf("Exe imgData x_size y_size \n");
+		exit(0);
+	}
+	imgSize.width = atoi(argv[2]);
+	imgSize.height = atoi(argv[3]);
+	//Block = atoi(argv[4]);
+	//inputaver = atoi(argv[4]);
+	//position = atoi(argv[4]);
+
+	imgSize2.width = atoi(argv[5]);
+	imgSize2.height = atoi(argv[6]);
+
+	img = uc_alloc(imgSize.width, imgSize.height);
+	img2 = uc_alloc(imgSize2.width, imgSize2.height);
+
+	read_ucmatrix(imgSize.width, imgSize.height, img, argv[1]);
+	read_ucmatrix(imgSize2.width, imgSize2.height, img2, argv[4]);
+
+	outimg = uc_alloc(imgSize.width, imgSize.height);
+
+	for (i = 0; i < 8; i++) {
+		bitimg[i] = uc_alloc(imgSize.width, imgSize.height);
+	}
+
+
+	outimg2 = uc_alloc(imgSize2.width, imgSize2.height);
+
+
+	cvImg = cvCreateImage(imgSize, 8, 1);
+	cvImg2 = cvCreateImage(imgSize2, 8, 1);
+	
+
+	outimg3 = uc_alloc(imgSize.width, imgSize.height);
+	outimg4 = uc_alloc(imgSize.width, imgSize.height);
+
+
+	//Negative(img, outimg);
+
+	//mosaic(img, outimg, imgSize.width, imgSize.height, position);
+
+	//average(img, imgSize.width, imgSize.height);
+	//ssum=myaver(img, imgSize.width, imgSize.height);
+
+	//darkandwhite(img, img, imgSize.height, imgSize.width, position);
+
+	//BitSliceAndpluse(img, bitimg, outimg, outimg2, imgSize.width, imgSize.height);
+	//justpluse(img, outimg, outimg2, imgSize.width, imgSize.width);
+
+
+	//printf("\nvar = %f\n", vvar(outimg, myaver(img, imgSize.width, imgSize.height), imgSize.width, imgSize.height));
+	//printf("\nvar = %f\n", vvar(outimg2, myaver(img, imgSize.width, imgSize.height),imgSize.width, imgSize.height));
+	
+	//CCCC(img,outimg2, imgSize.width, imgSize.height, 200,position);
+	//plusee2(img, outimg, imgSize.width, imgSize.height, 10);
+
+	//printf("sdddddddddddddd");
+	//scanf_s("%d%d", &cc1, &cc2);
+	//CCCC3(img, outimg, imgSize.width, imgSize.height,100 ,position,cc1,cc2);
+
+	/*
+	
+	//darkandwhite(img, img, imgSize.width, imgSize.height,60);
+	darkandwhite(img2, img2, imgSize2.width, imgSize2.height, 100);
+
+
+
+
+	//printf("\naverage = %f\n", myaver(outimg, imgSize.width, imgSize.height));
+	//printf("\naverage = %f\n", myaver(outimg2, imgSize.width, imgSize.height));
+
+	
+	get_hist(img, outimg, imgSize.width, imgSize.height);
+	tmp1 = (double)cdfOfHisto[255];
+	for (i = 0; i < 256; i++) {
+		tmp = (int)255 * (cdfOfHisto[i] / tmp1);
+		histogram2[i] = tmp;
+		
+	}
+	
+	get_hist1(img2, outimg2, imgSize2.width, imgSize2.height);
+	tmp1 = (double)cdfOfHisto[255];
+	for (i = 0; i < 256; ++i) {
+		tmp = (int)255 * (cdfOfHisto[i] / tmp1);
+		histogramSpec[i] = tmp;
+	}
+
+	
+	get_Match(outimg, outimg3,imgSize.width, imgSize.height, histogram2, histogramSpec, histogramMatch);
+	get_hist2(outimg3, outimg4, imgSize.height, imgSize.width);
+	
+	
+
+
+	//contrastStreching(img, outimg4, imgSize.height, imgSize.width);
+
+
+
+	for (i = 0; i < imgSize.height; i++)
+		for (j = 0; j < imgSize.width; j++)
+		{
+
+			((uchar*)(cvImg->imageData + cvImg->widthStep * i))[j] =img[i][j];
+
+		}
+	cvShowImage("Original img", cvImg);
+
+
+	for (i = 0; i < imgSize2.height; i++)
+		for (j = 0; j < imgSize2.width; j++)
+		{
+
+			((uchar*)(cvImg2->imageData + cvImg2->widthStep * i))[j] = img2[i][j];
+
+		}
+	cvShowImage("Expected img", cvImg2);
+	for (i = 0; i < imgSize.height; i++)
+		for (j = 0; j < imgSize.width; j++)
+		{
+
+			((uchar*)(cvImg->imageData + cvImg->widthStep * i))[j] = outimg3[i][j];
+
+		}
+	cvShowImage("Resultimg", cvImg);
+
+	*/
+	get_hist(img, outimg3, imgSize.height, imgSize.width);
+	get_hist1(outimg3, outimg4, imgSize.height, imgSize.width);
+
+	for (i = 0; i < imgSize.height; i++)
+		for (j = 0; j < imgSize.width; j++)
+		{
+
+			((uchar*)(cvImg->imageData + cvImg->widthStep * i))[j] = img[i][j];
+
+		}
+	cvShowImage("Original img", cvImg);
+
+	for (i = 0; i < imgSize.height; i++)
+		for (j = 0; j < imgSize.width; j++)
+		{
+
+			((uchar*)(cvImg->imageData + cvImg->widthStep * i))[j] = outimg3[i][j];
+
+		}
+	cvShowImage("Equl img", cvImg);
+	
+	
+
+	cvWaitKey(0);
+
+	cvDestroyWindow("image");
+	cvReleaseImage(&cvImg);
+
+	getchar();
+	getchar();
+
+	return 0;
+
+}
